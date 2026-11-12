@@ -1688,13 +1688,19 @@ fn background_reset_for_transition(
         return BackgroundReset::None;
     }
 
-    match next {
-        WindowBackgroundAppearance::MicaBackdrop | WindowBackgroundAppearance::MicaAltBackdrop => {
-            BackgroundReset::AccentPolicy
-        }
-        WindowBackgroundAppearance::Opaque
-        | WindowBackgroundAppearance::Transparent
-        | WindowBackgroundAppearance::Blurred => BackgroundReset::SystemBackdrop,
+    let was_mica = matches!(
+        previous,
+        WindowBackgroundAppearance::MicaBackdrop | WindowBackgroundAppearance::MicaAltBackdrop
+    );
+    let will_be_mica = matches!(
+        next,
+        WindowBackgroundAppearance::MicaBackdrop | WindowBackgroundAppearance::MicaAltBackdrop
+    );
+
+    match (was_mica, will_be_mica) {
+        (true, false) => BackgroundReset::SystemBackdrop,
+        (false, true) => BackgroundReset::AccentPolicy,
+        _ => BackgroundReset::None,
     }
 }
 
@@ -1849,6 +1855,14 @@ mod tests {
         assert_eq!(
             background_reset_for_transition(MicaAltBackdrop, Opaque),
             BackgroundReset::SystemBackdrop
+        );
+        assert_eq!(
+            background_reset_for_transition(MicaBackdrop, MicaAltBackdrop),
+            BackgroundReset::None
+        );
+        assert_eq!(
+            background_reset_for_transition(Transparent, Blurred),
+            BackgroundReset::None
         );
         assert_eq!(
             background_reset_for_transition(MicaBackdrop, MicaBackdrop),
