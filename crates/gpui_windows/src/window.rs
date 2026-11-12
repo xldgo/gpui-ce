@@ -925,8 +925,8 @@ impl PlatformWindow for WindowsWindow {
         let hwnd = self.0.hwnd;
 
         // The legacy AccentPolicy and DWM system backdrop are independent window
-        // attributes. Clear the other API's state when switching appearances so
-        // it cannot override the newly requested effect.
+        // attributes. Always clear the other API's state when changing the
+        // appearance, even after an unsupported or failed previous request.
         match background_reset_for_transition(previous, background_appearance) {
             BackgroundReset::None => {}
             BackgroundReset::AccentPolicy => {
@@ -1688,19 +1688,13 @@ fn background_reset_for_transition(
         return BackgroundReset::None;
     }
 
-    let was_mica = matches!(
-        previous,
-        WindowBackgroundAppearance::MicaBackdrop | WindowBackgroundAppearance::MicaAltBackdrop
-    );
-    let will_be_mica = matches!(
-        next,
-        WindowBackgroundAppearance::MicaBackdrop | WindowBackgroundAppearance::MicaAltBackdrop
-    );
-
-    match (was_mica, will_be_mica) {
-        (true, false) => BackgroundReset::SystemBackdrop,
-        (false, true) => BackgroundReset::AccentPolicy,
-        _ => BackgroundReset::None,
+    match next {
+        WindowBackgroundAppearance::MicaBackdrop | WindowBackgroundAppearance::MicaAltBackdrop => {
+            BackgroundReset::AccentPolicy
+        }
+        WindowBackgroundAppearance::Opaque
+        | WindowBackgroundAppearance::Transparent
+        | WindowBackgroundAppearance::Blurred => BackgroundReset::SystemBackdrop,
     }
 }
 
@@ -1858,11 +1852,11 @@ mod tests {
         );
         assert_eq!(
             background_reset_for_transition(MicaBackdrop, MicaAltBackdrop),
-            BackgroundReset::None
+            BackgroundReset::AccentPolicy
         );
         assert_eq!(
             background_reset_for_transition(Transparent, Blurred),
-            BackgroundReset::None
+            BackgroundReset::SystemBackdrop
         );
         assert_eq!(
             background_reset_for_transition(MicaBackdrop, MicaBackdrop),
