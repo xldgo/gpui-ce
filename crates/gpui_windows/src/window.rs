@@ -921,8 +921,22 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
-        self.state.background_appearance.set(background_appearance);
+        let previous = self.state.background_appearance.replace(background_appearance);
         let hwnd = self.0.hwnd;
+
+        // The legacy AccentPolicy and DWM system backdrop are independent window
+        // attributes. Clear the other API's state when switching appearances so
+        // it cannot override the newly requested effect.
+        match background_reset_for_transition(previous, background_appearance) {
+            BackgroundReset::None => {}
+            BackgroundReset::AccentPolicy => {
+                set_window_composition_attribute(hwnd, None, 0);
+            }
+            BackgroundReset::SystemBackdrop => {
+                // DWMSBT_NONE
+                dwm_set_window_composition_attribute(hwnd, 1);
+            }
+        }
 
         // using Dwm APIs for Mica and MicaAlt backdrops.
         // others follow the set_window_composition_attribute approach
@@ -1659,6 +1673,31 @@ fn retrieve_window_placement(
     Ok(placement)
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum BackgroundReset {
+    None,
+    AccentPolicy,
+    SystemBackdrop,
+}
+
+fn background_reset_for_transition(
+    previous: WindowBackgroundAppearance,
+    next: WindowBackgroundAppearance,
+) -> BackgroundReset {
+    if previous == next {
+        return BackgroundReset::None;
+    }
+
+    match next {
+        WindowBackgroundAppearance::MicaBackdrop | WindowBackgroundAppearance::MicaAltBackdrop => {
+            BackgroundReset::AccentPolicy
+        }
+        WindowBackgroundAppearance::Opaque
+        | WindowBackgroundAppearance::Transparent
+        | WindowBackgroundAppearance::Blurred => BackgroundReset::SystemBackdrop,
+    }
+}
+
 fn dwm_set_window_composition_attribute(hwnd: HWND, backdrop_type: u32) {
     let mut version = unsafe { std::mem::zeroed() };
     let status = unsafe { windows::Wdk::System::SystemServices::RtlGetVersion(&mut version) };
@@ -1784,10 +1823,38 @@ fn character_palette_inputs(held_modifiers: &[VIRTUAL_KEY], win_held: bool) -> V
 
 #[cfg(test)]
 mod tests {
-    use super::{ClickState, character_palette_inputs};
-    use gpui::{DevicePixels, MouseButton, point};
+    use super::{
+        BackgroundReset, ClickState, background_reset_for_transition, character_palette_inputs,
+    };
+    use gpui::{DevicePixels, MouseButton, WindowBackgroundAppearance, point};
     use std::time::Duration;
     use windows::Win32::UI::Input::KeyboardAndMouse::*;
+
+    #[test]
+    fn background_switches_reset_the_other_compositor() {
+        use WindowBackgroundAppearance::*;
+
+        assert_eq!(
+            background_reset_for_transition(Blurred, MicaBackdrop),
+            BackgroundReset::AccentPolicy
+        );
+        assert_eq!(
+            background_reset_for_transition(Transparent, MicaAltBackdrop),
+            BackgroundReset::AccentPolicy
+        );
+        assert_eq!(
+            background_reset_for_transition(MicaBackdrop, Blurred),
+            BackgroundReset::SystemBackdrop
+        );
+        assert_eq!(
+            background_reset_for_transition(MicaAltBackdrop, Opaque),
+            BackgroundReset::SystemBackdrop
+        );
+        assert_eq!(
+            background_reset_for_transition(MicaBackdrop, MicaBackdrop),
+            BackgroundReset::None
+        );
+    }
 
     #[test]
     fn character_palette_preserves_held_modifiers() {
